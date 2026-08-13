@@ -22,13 +22,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # 👇 关键步骤：禁用更新器签名，避免私钥密码错误
-      - name: Disable updater artifacts (skip signing)
+      # 禁用更新器签名（避免私钥错误）
+      - name: Disable updater artifacts
         run: |
           $configPath = "src/src-tauri/tauri.conf.json"
           $config = Get-Content $configPath | ConvertFrom-Json
           $config.bundle.createUpdaterArtifacts = $false
-          # 如果存在 plugins.updater，也可以一并移除，但只改上面字段即可
           $config | ConvertTo-Json -Depth 10 | Set-Content $configPath
         shell: pwsh
 
@@ -38,7 +37,6 @@ jobs:
           npm ci
           npm run build
           npm run tauri build -- --target x86_64-pc-windows-msvc
-        # 不再需要设置 TAURI_SIGNING_* 环境变量，因为已经禁用了更新器
 
       # 提取版本号
       - name: Get version
@@ -49,19 +47,21 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
-      # 1. 便携版 ZIP
+      # 1. 便携版 ZIP（使用正确的构建路径）
       - name: Create portable ZIP
         run: |
+          $exePath = "src\src-tauri\target\x86_64-pc-windows-msvc\release\health-reminder.exe"
           New-Item -ItemType Directory -Path portable
-          Copy-Item "src\src-tauri\target\release\health-reminder.exe" portable\
+          Copy-Item $exePath portable\
           $zipName = "Health-Reminder-Portable-v$env:VERSION.zip"
           Compress-Archive -Path portable\* -DestinationPath $zipName
           echo "PORTABLE_ZIP=$zipName" >> $env:GITHUB_ENV
 
-      # 2. 安装版 NSIS 安装包
+      # 2. 安装版 NSIS 安装包（同样修正路径）
       - name: Copy installer
         run: |
-          $installerPath = Get-ChildItem -Path "src\src-tauri\target\release\bundle\nsis\*.exe" | Select-Object -First 1
+          $installerDir = "src\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis"
+          $installerPath = Get-ChildItem -Path $installerDir -Filter "*.exe" | Select-Object -First 1
           $installerName = "Health-Reminder-Setup-v$env:VERSION.exe"
           Copy-Item $installerPath.FullName $installerName
           echo "INSTALLER_NAME=$installerName" >> $env:GITHUB_ENV
