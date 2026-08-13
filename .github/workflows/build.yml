@@ -1,5 +1,7 @@
 name: Build Installer + Portable
-
+# 在 jobs 之前，为整个工作流设置权限
+permissions:
+  contents: write  # 授予创建 Release 和上传附件的权限
 on:
   schedule:
     - cron: '0 2 * * *'
