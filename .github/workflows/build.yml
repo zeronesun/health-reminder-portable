@@ -1,15 +1,17 @@
 name: Build Installer + Portable
-# 在 jobs 之前，为整个工作流设置权限
+
 permissions:
-  contents: write  # 授予创建 Release 和上传附件的权限
+  contents: write
+
 on:
   schedule:
-    - cron: '0 2 * * *'
-  workflow_dispatch:
+    - cron: '0 2 * * *'   # 每天检查一次
+  workflow_dispatch:       # 手动触发
 
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +26,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # 禁用更新器签名（避免私钥错误）
+      # 禁用更新器签名
       - name: Disable updater artifacts
         run: |
           $configPath = "src/src-tauri/tauri.conf.json"
@@ -33,6 +35,7 @@ jobs:
           $config | ConvertTo-Json -Depth 10 | Set-Content $configPath
         shell: pwsh
 
+      # 构建 Tauri
       - name: Build Tauri app
         run: |
           cd src
@@ -49,7 +52,31 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
-      # 1. 便携版 ZIP（使用正确的构建路径）
+      # ----------------- 关键新增步骤 -----------------
+      # 检查该版本是否已经发布过
+      - name: Check if release already exists
+        id: check_release
+        run: |
+          $version = "$env:VERSION"
+          $tag = "portable-v$version"
+          
+          # 调用 GitHub API 获取所有 Release
+          $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases" -Headers @{ "Authorization" = "token $env:GITHUB_TOKEN" }
+          
+          $existing = $releases | Where-Object { $_.tag_name -eq $tag }
+          
+          if ($existing) {
+            echo "RELEASE_EXISTS=true" >> $env:GITHUB_ENV
+            echo "Release for version $version already exists. Skipping release creation."
+          } else {
+            echo "RELEASE_EXISTS=false" >> $env:GITHUB_ENV
+            echo "No existing release for version $version. Proceeding."
+          }
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 1. 便携版 ZIP
       - name: Create portable ZIP
         run: |
           $exePath = "src\src-tauri\target\x86_64-pc-windows-msvc\release\health-reminder.exe"
@@ -59,7 +86,7 @@ jobs:
           Compress-Archive -Path portable\* -DestinationPath $zipName
           echo "PORTABLE_ZIP=$zipName" >> $env:GITHUB_ENV
 
-      # 2. 安装版 NSIS 安装包（同样修正路径）
+      # 2. 安装版 NSIS 安装包
       - name: Copy installer
         run: |
           $installerDir = "src\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis"
@@ -68,6 +95,7 @@ jobs:
           Copy-Item $installerPath.FullName $installerName
           echo "INSTALLER_NAME=$installerName" >> $env:GITHUB_ENV
 
+      # 上传 Artifacts（总是上传，方便在 Actions 页面下载）
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -76,11 +104,13 @@ jobs:
             ${{ env.PORTABLE_ZIP }}
             ${{ env.INSTALLER_NAME }}
 
-      - name: Create Release
+      # 仅在版本未发布时才创建 Release
+      - name: Create Release (if new version)
+        if: env.RELEASE_EXISTS == 'false'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: portable-v${{ env.VERSION }}-build${{ github.run_id }}
-          name: "Build v${{ env.VERSION }} (Build #${{ github.run_id }})"
+          tag_name: portable-v${{ env.VERSION }}
+          name: "Health-Reminder Portable v${{ env.VERSION }}"
           files: |
             ${{ env.PORTABLE_ZIP }}
             ${{ env.INSTALLER_NAME }}
